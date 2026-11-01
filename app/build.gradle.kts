@@ -15,14 +15,24 @@ android {
         versionName = "1.8.22-rec"
     }
 
+    signingConfigs {
+        create("fixed") {
+            storeFile = rootProject.file("keystore/dshpet.jks")
+            storePassword = "dshpet123"
+            keyAlias = "dshpet"
+            keyPassword = "dshpet123"
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("fixed")
         }
         release {
             isMinifyEnabled = false
-            // 用 debug 签名，保证任何机器上都能直接安装
-            signingConfig = signingConfigs.getByName("debug")
+            // 固定 keystore 签名，保证后续版本能覆盖安装
+            signingConfig = signingConfigs.getByName("fixed")
         }
     }
 
