@@ -50,6 +50,7 @@ class MainActivity : Activity() {
     private lateinit var btnLinesExport: TextView
     private lateinit var btnLinesImport: TextView
     private lateinit var btnLinesReload: TextView
+    private lateinit var btnScreen: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,6 +80,11 @@ class MainActivity : Activity() {
         btnLinesExport = findViewById(R.id.btnLinesExport)
         btnLinesImport = findViewById(R.id.btnLinesImport)
         btnLinesReload = findViewById(R.id.btnLinesReload)
+        btnScreen = findViewById(R.id.btnScreen)
+        btnScreen.setOnClickListener {
+            Sfx.press()
+            requestScreenPermission()
+        }
 
         // 宠物名字来自 pet-config.json（现在是「大肥鱼」）
         try {
@@ -288,6 +294,18 @@ class MainActivity : Activity() {
         "v" + (info.versionName ?: "1.6")
     } catch (_: Throwable) {
         "v1.6"
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent?.action == PetService.ACTION_SCREEN_PERM) {
+            try {
+                requestScreenPermission()
+            } catch (t: Throwable) {
+                Diag.record(this, "onNewIntent 请求投屏失败", t)
+            }
+        }
     }
 
     /** 弹系统的「录制或投放」授权框（一次授权后会话保持） */

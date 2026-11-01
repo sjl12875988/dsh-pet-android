@@ -11,8 +11,8 @@ android {
         applicationId = "com.dshpet.android.screen"
         minSdk = 28
         targetSdk = 34
-        versionCode = 32
-        versionName = "1.8.22-rec"
+        versionCode = 33
+        versionName = "1.8.23-screenbtn"
     }
 
     signingConfigs {
