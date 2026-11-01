@@ -2,6 +2,7 @@ name: build-patched-apk
 
 # 云端给「大肥鱼桌宠」打文件桥补丁并出 debug APK
 # 用法：Actions → build-patched-apk → Run workflow
+# 修正：不再用 android-actions/setup-android（在 ubuntu-latest 上会失败），改用 runner 预装的 Android SDK
 on:
   workflow_dispatch:
 
@@ -37,11 +38,24 @@ jobs:
       - name: 安装 ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: 安装 Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: 安装 SDK 组件
-        run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+      - name: 准备 Android SDK（用 runner 预装，逐级兜底）
+        run: |
+          set -x
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          ls "$ANDROID_SDK_ROOT" || true
+          echo "$ANDROID_SDK_ROOT"
+          if command -v sdkmanager >/dev/null 2>&1; then SM=sdkmanager;
+          elif [ -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then SM="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager";
+          elif [ -x "$ANDROID_SDK_ROOT/cmdline-tools/bin/sdkmanager" ]; then SM="$ANDROID_SDK_ROOT/cmdline-tools/bin/sdkmanager";
+          elif [ -x "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" ]; then SM="$ANDROID_SDK_ROOT/tools/bin/sdkmanager";
+          else echo "no sdkmanager found"; exit 1; fi
+          echo "SM=$SM"
+          yes | "$SM" --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
+          ls "$ANDROID_SDK_ROOT/build-tools" || true
+          echo "$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
 
       - name: 还原素材
         run: |
@@ -51,7 +65,8 @@ jobs:
       - name: 构建 APK
         run: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-          ./gradlew :app:assembleDebug --no-daemon
+          cat local.properties
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
       - name: 上传 APK
         uses: actions/upload-artifact@v4
