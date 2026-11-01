@@ -15,8 +15,12 @@ import java.io.File
 import java.io.FileOutputStream
 
 /**
- * 屏幕抓帧：授权一次后保持 MediaProjection 会话，之后按需取最新一帧。
- * 输出 /sdcard/Download/.dshpet/screen.jpg（半分辨率 JPEG）。
+ * 屏幕抓帧：授权一次后保持 MediaProjection 会话。
+ *
+ * 关键点（v1.8.21 修）：ImageReader 必须**一直有人消费**。
+ *  之前只在 grab() 时取一帧，队列（2 个 buffer）很快装满，producer 被卡住，
+ *  之后 acquireLatestImage 拿到的永远是几分钟前那两帧 —— 表现为"截图停在旧画面"。
+ *  现在挂常驻 listener 持续 drain，只在需要时（wantFrame）把当前帧转成 Bitmap 留着。
  */
 object ScreenCapture {
 
@@ -29,6 +33,10 @@ object ScreenCapture {
     private var w = 0
     private var h = 0
 
+    private val lock = Any()
+    private var latest: Bitmap? = null
+
+    @Volatile private var wantFrame = false
     @Volatile var lastError: String = ""
 
     fun isRunning(): Boolean = reader != null
@@ -51,19 +59,21 @@ object ScreenCapture {
             w = Math.max(2, dm.widthPixels / 2)
             h = Math.max(2, dm.heightPixels / 2)
             val dpi = Math.max(1, dm.densityDpi / 2)
-            val r = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+            val r = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 3)
             val t = HandlerThread("dshpet-screen").also { it.start() }
             thread = t
+            val handler = Handler(t.looper)
             p.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
                     release()
                 }
-            }, Handler(t.looper))
+            }, handler)
+            r.setOnImageAvailableListener({ rd -> handleFrame(rd) }, handler)
             val d = p.createVirtualDisplay(
                 "dshpet-screen",
                 w, h, dpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                r.surface, null, null
+                r.surface, null, handler
             )
             if (d == null) {
                 lastError = "createVirtualDisplay returned null"
@@ -83,19 +93,26 @@ object ScreenCapture {
         }
     }
 
-    /** 取最新一帧，写成 screen.jpg；失败返回 null */
-    fun grab(): File? {
-        val r = reader ?: return null
-        var img: android.media.Image? = null
-        for (i in 0 until 8) {
-            img = try { r.acquireLatestImage() } catch (t: Throwable) { null }
-            if (img != null) break
-            try { Thread.sleep(120) } catch (_: InterruptedException) {}
+    /** 常驻消费：保证画面永远是最新的；只有被要求时才把当前帧转 Bitmap */
+    private fun handleFrame(r: ImageReader) {
+        val img = try { r.acquireLatestImage() } catch (t: Throwable) { null } ?: return
+        try {
+            if (wantFrame) {
+                wantFrame = false
+                val bmp = toBitmap(img)
+                if (bmp != null) {
+                    synchronized(lock) {
+                        latest?.recycle()
+                        latest = bmp
+                    }
+                }
+            }
+        } finally {
+            try { img.close() } catch (_: Throwable) {}
         }
-        if (img == null) {
-            lastError = "no frame available"
-            return null
-        }
+    }
+
+    private fun toBitmap(img: android.media.Image): Bitmap? {
         return try {
             val plane = img.planes[0]
             val rs = plane.rowStride
@@ -104,13 +121,51 @@ object ScreenCapture {
             val padded = Bitmap.createBitmap(w + pad / ps, h, Bitmap.Config.ARGB_8888)
             padded.copyPixelsFromBuffer(plane.buffer)
             val cropped = Bitmap.createBitmap(padded, 0, 0, w, h)
+            padded.recycle()
+            cropped
+        } catch (t: Throwable) {
+            lastError = t.toString()
+            null
+        }
+    }
+
+    /** 取"此刻"的一帧并写成 screen.jpg；失败返回 null */
+    fun grab(): File? {
+        if (reader == null) return null
+        synchronized(lock) {
+            latest?.recycle()
+            latest = null
+        }
+        wantFrame = true
+        val deadline = System.currentTimeMillis() + 2500L
+        while (System.currentTimeMillis() < deadline) {
+            val bmp = synchronized(lock) {
+                val b = latest
+                latest = null
+                b
+            }
+            if (bmp != null) {
+                return try {
+                    writeJpeg(bmp)
+                } finally {
+                    bmp.recycle()
+                }
+            }
+            try { Thread.sleep(60L) } catch (_: InterruptedException) {}
+        }
+        lastError = "no fresh frame in 2.5s"
+        return null
+    }
+
+    private fun writeJpeg(bmp: Bitmap): File? {
+        return try {
             val dir = File(DIR)
             if (!dir.exists()) dir.mkdirs()
             val f = File(dir, "screen.jpg")
             val tmp = File(dir, "screen.jpg.tmp")
             val out = FileOutputStream(tmp)
             try {
-                cropped.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                bmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
             } finally {
                 try { out.close() } catch (_: Throwable) {}
             }
@@ -118,24 +173,25 @@ object ScreenCapture {
                 tmp.copyTo(f, true)
                 tmp.delete()
             }
-            padded.recycle()
-            cropped.recycle()
             f
         } catch (t: Throwable) {
             lastError = t.toString()
             null
-        } finally {
-            try { img.close() } catch (_: Throwable) {}
         }
     }
 
     fun release() {
         try { display?.release() } catch (_: Throwable) {}
+        try { reader?.setOnImageAvailableListener(null, null) } catch (_: Throwable) {}
         try { reader?.close() } catch (_: Throwable) {}
         try { projection?.stop() } catch (_: Throwable) {}
         display = null
         reader = null
         projection = null
+        synchronized(lock) {
+            latest?.recycle()
+            latest = null
+        }
         try { thread?.quitSafely() } catch (_: Throwable) {}
         thread = null
     }
