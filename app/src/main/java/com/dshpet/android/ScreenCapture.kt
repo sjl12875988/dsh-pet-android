@@ -41,7 +41,8 @@ object ScreenCapture {
         if (isRunning()) return true
         return try {
             val mpm = ctx.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            val p = mpm.getMediaProjection(resultCode, data)
+            val intent = data ?: run { lastError = "projection data is null"; return false }
+            val p = mpm.getMediaProjection(resultCode, intent)
             if (p == null) {
                 lastError = "getMediaProjection returned null"
                 return false
