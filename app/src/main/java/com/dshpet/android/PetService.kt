@@ -28,6 +28,8 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import org.json.JSONObject
+import java.io.File
 import java.util.Calendar
 import kotlin.random.Random
 
@@ -53,6 +55,11 @@ class PetService : Service() {
         const val ACTION_STOP = "com.dshpet.android.action.STOP"
         const val ACTION_RELOAD = "com.dshpet.android.action.RELOAD"
         const val ACTION_LINES = "com.dshpet.android.action.LINES"
+        const val ACTION_SCREEN_PERM = "com.dshpet.android.action.SCREEN_PERM"
+
+        /** 供文件桥调用（PetBridge）：当前运行中的服务实例 */
+        @Volatile
+        var instance: PetService? = null
 
         fun start(ctx: Context) {
             val i = Intent(ctx, PetService::class.java).setAction(ACTION_START)
@@ -107,6 +114,8 @@ class PetService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
+        PetBridge.start(this)
         // 兜底：即使 Application 没被自定义（或在某些机型上被跳过），也保证音效预载
         try {
             Sfx.init(this)
@@ -365,6 +374,106 @@ class PetService : Service() {
             path.lineTo(width / 2f, height.toFloat())
             path.close()
             canvas.drawPath(path, paint)
+        }
+    }
+
+    // ── 文件桥入口（PetBridge 调用）────────────────────────────
+    fun bridgeSay(text: String) {
+        val h = held.firstOrNull() ?: return
+        say(h.pet, text)
+    }
+
+    fun bridgePlay(slug: String) {
+        held.firstOrNull()?.pet?.bridgePlay(slug)
+    }
+
+    fun bridgePetCount(): Int = held.size
+
+    /** 文件桥：抓一帧屏幕，结果写 screen.json / screen.jpg */
+    fun bridgeScreen() {
+        try {
+            if (!ScreenCapture.isRunning()) {
+                writeScreenState("need_permission", null)
+                promptScreenPermission()
+                return
+            }
+            val f = ScreenCapture.grab()
+            writeScreenState(if (f != null) "ok" else "fail", f)
+        } catch (t: Throwable) {
+            Diag.record(this, "bridgeScreen 失败", t)
+            writeScreenState("error", null)
+        }
+    }
+
+    /** 由 MainActivity 在用户同意「录制/投屏」后调用 */
+    fun enableScreenCapture(resultCode: Int, data: Intent?): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                try {
+                    startForeground(
+                        NOTIF_ID,
+                        buildNotification(),
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+                    )
+                } catch (t: Throwable) {
+                    Diag.record(this, "切换 mediaProjection 前台类型失败", t)
+                }
+            }
+            val ok = ScreenCapture.start(this, resultCode, data)
+            writeScreenState(if (ok) "granted" else "start_failed", null)
+            ok
+        } catch (t: Throwable) {
+            Diag.record(this, "enableScreenCapture 失败", t)
+            false
+        }
+    }
+
+    private fun writeScreenState(status: String, f: File?) {
+        try {
+            val o = JSONObject()
+            o.put("ts", System.currentTimeMillis())
+            o.put("status", status)
+            if (f != null) {
+                o.put("file", f.absolutePath)
+                o.put("bytes", f.length())
+                o.put("w", ScreenCapture.frameWidth())
+                o.put("h", ScreenCapture.frameHeight())
+            }
+            if (ScreenCapture.lastError.isNotEmpty()) o.put("error", ScreenCapture.lastError)
+            val dir = File("/sdcard/Download/.dshpet")
+            if (!dir.exists()) dir.mkdirs()
+            val tmp = File(dir, "screen.json.tmp")
+            tmp.writeText(o.toString())
+            if (!tmp.renameTo(File(dir, "screen.json"))) {
+                tmp.copyTo(File(dir, "screen.json"), true)
+                tmp.delete()
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun promptScreenPermission() {
+        try {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            ensureChannel()
+            val i = Intent(this, MainActivity::class.java)
+                .setAction(ACTION_SCREEN_PERM)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val pi = PendingIntent.getActivity(
+                this, 2, i,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val n = Notification.Builder(this, CHANNEL_ID)
+                .setContentTitle("主人，我想看你屏幕")
+                .setContentText("点一下允许投屏，之后我就能帮你截图啦")
+                .setSmallIcon(R.drawable.ic_launcher)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build()
+            nm.notify(1001, n)
+        } catch (t: Throwable) {
+            Diag.record(this, "投屏授权提示失败", t)
         }
     }
 
@@ -758,6 +867,7 @@ class PetService : Service() {
     }
 
     override fun onDestroy() {
+        instance = null
         try {
             teardown()
         } catch (t: Throwable) {

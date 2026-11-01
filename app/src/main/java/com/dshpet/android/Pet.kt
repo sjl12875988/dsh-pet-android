@@ -299,6 +299,11 @@ class Pet(
         return d.isRunning
     }
 
+    /** 供外部桥接调用：直接播一段动作（slug 见 pet-config.json 的 animations） */
+    fun bridgePlay(slug: String) {
+        play(slug)
+    }
+
     private fun play(slug: String, onEnd: (() -> Unit)? = null) {
         if (slug.isEmpty()) {
             onEnd?.invoke()

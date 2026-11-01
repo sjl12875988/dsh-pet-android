@@ -3,7 +3,9 @@ package com.dshpet.android
 import android.Manifest
 import android.app.Activity
 import android.app.ActivityManager
+import android.content.Context
 import android.content.Intent
+import android.media.projection.MediaProjectionManager
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
@@ -21,6 +23,9 @@ private const val REQ_LINES_EXPORT = 1002
 
 /** 「从文件导入」的请求码 */
 private const val REQ_LINES_IMPORT = 1003
+
+/** 「允许看屏幕（投屏）」的请求码 */
+private const val REQ_SCREEN = 1004
 
 /**
  * 设置界面：授权 + 开关 + 大小 + 只数 + 碎碎念/贴边躲藏 + 音效 + 台词库。
@@ -49,6 +54,13 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        if (intent?.action == PetService.ACTION_SCREEN_PERM) {
+            try {
+                requestScreenPermission()
+            } catch (t: Throwable) {
+                Diag.record(this, "请求投屏权限失败", t)
+            }
+        }
 
         petName = findViewById(R.id.petName)
         status = findViewById(R.id.status)
@@ -278,9 +290,39 @@ class MainActivity : Activity() {
         "v1.6"
     }
 
-    /** 「导出到文件」「从文件导入」的回调 */
+    /** 弹系统的「录制或投放」授权框（一次授权后会话保持） */
+    private fun requestScreenPermission() {
+        try {
+            val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            startActivityForResult(mpm.createScreenCaptureIntent(), REQ_SCREEN)
+        } catch (t: Throwable) {
+            Diag.record(this, "打开投屏授权框失败", t)
+            Toast.makeText(this, "这台机器不允许投屏授权", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** 「导出到文件」「从文件导入」「投屏授权」的回调 */
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_SCREEN) {
+            if (resultCode == RESULT_OK && data != null) {
+                val ok = try {
+                    PetService.instance?.enableScreenCapture(resultCode, data) ?: false
+                } catch (t: Throwable) {
+                    Diag.record(this, "启用投屏失败", t)
+                    false
+                }
+                Toast.makeText(
+                    this,
+                    if (ok) "已允许桌宠看屏幕" else "屏幕抓取启动失败",
+                    Toast.LENGTH_LONG,
+                ).show()
+                if (!ok) requestScreenPermission()
+            } else {
+                Toast.makeText(this, "没有允许看屏幕", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         if (resultCode != RESULT_OK) return
         val uri = data?.data ?: return
 

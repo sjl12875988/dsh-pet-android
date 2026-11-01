@@ -1,8 +1,7 @@
 name: build-patched-apk
 
-# 云端给「大肥鱼桌宠」打文件桥补丁并出 debug APK
+# 从本仓库（已含文件桥补丁 + 屏幕抓帧能力）直接构建 debug APK
 # 用法：Actions → build-patched-apk → Run workflow
-# 修正：不再用 android-actions/setup-android（在 ubuntu-latest 上会失败），改用 runner 预装的 Android SDK
 on:
   workflow_dispatch:
 
@@ -10,19 +9,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 检出上游源码（固定提交，保证补丁可打）
+      - name: 检出本仓库源码
         uses: actions/checkout@v4
-        with:
-          repository: Tony-Chen-Stark/dsh-pet-android
-          ref: eca369a4318766e057d2b62d9db5bc1447ab62e8
-
-      - name: 下载并应用文件桥补丁
-        run: |
-          curl -fsSL https://paste.rs/Uy0OZ -o /tmp/link.patch
-          wc -l /tmp/link.patch
-          git apply --verbose /tmp/link.patch
-          grep -n PetBridge app/src/main/java/com/dshpet/android/PetService.kt
-          grep -n MANAGE_EXTERNAL_STORAGE app/src/main/AndroidManifest.xml
 
       - name: 安装 JDK 17
         uses: actions/setup-java@v4
@@ -44,7 +32,6 @@ jobs:
           export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           export ANDROID_HOME="$ANDROID_SDK_ROOT"
           ls "$ANDROID_SDK_ROOT" || true
-          echo "$ANDROID_SDK_ROOT"
           if command -v sdkmanager >/dev/null 2>&1; then SM=sdkmanager;
           elif [ -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then SM="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager";
           elif [ -x "$ANDROID_SDK_ROOT/cmdline-tools/bin/sdkmanager" ]; then SM="$ANDROID_SDK_ROOT/cmdline-tools/bin/sdkmanager";
