@@ -8,7 +8,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.dshpet.android"
+        applicationId = "com.dshpet.android.screen"
         minSdk = 28
         targetSdk = 34
         versionCode = 30
