@@ -1,0 +1,60 @@
+name: build-patched-apk
+
+# 云端给「大肥鱼桌宠」打文件桥补丁并出 debug APK
+# 用法：Actions → build-patched-apk → Run workflow
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出上游源码（固定提交，保证补丁可打）
+        uses: actions/checkout@v4
+        with:
+          repository: Tony-Chen-Stark/dsh-pet-android
+          ref: eca369a4318766e057d2b62d9db5bc1447ab62e8
+
+      - name: 下载并应用文件桥补丁
+        run: |
+          curl -fsSL https://paste.rs/Uy0OZ -o /tmp/link.patch
+          wc -l /tmp/link.patch
+          git apply --verbose /tmp/link.patch
+          grep -n PetBridge app/src/main/java/com/dshpet/android/PetService.kt
+          grep -n MANAGE_EXTERNAL_STORAGE app/src/main/AndroidManifest.xml
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 安装 Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 安装 ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: 安装 Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 SDK 组件
+        run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: 还原素材
+        run: |
+          chmod +x tools/fetch-and-transcode.sh
+          ./tools/fetch-and-transcode.sh
+
+      - name: 构建 APK
+        run: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          ./gradlew :app:assembleDebug --no-daemon
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-pet-bridge-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
