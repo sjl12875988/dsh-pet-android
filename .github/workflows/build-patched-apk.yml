@@ -50,6 +50,7 @@ jobs:
 
       - name: 构建 APK
         run: |
+          chmod +x gradlew
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
           cat local.properties
           ./gradlew :app:assembleDebug --no-daemon --stacktrace
