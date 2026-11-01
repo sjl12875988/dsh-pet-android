@@ -405,6 +405,87 @@ class PetService : Service() {
         }
     }
 
+    // ── 观看记录（rec_start / rec_stop）──────────────────────────
+    @Volatile private var recOn = false
+    private var recThread: Thread? = null
+    @Volatile private var recEvery = 3
+    @Volatile private var recCount = 0
+    @Volatile private var recDir = ""
+
+    fun bridgeRecordStart(everySec: Int) {
+        recEvery = if (everySec in 1..60) everySec else 3
+        if (recOn) {
+            writeRecState("running")
+            return
+        }
+        if (!ScreenCapture.isRunning()) {
+            writeRecState("need_permission")
+            promptScreenPermission()
+            return
+        }
+        recOn = true
+        recCount = 0
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
+        recDir = "/sdcard/Download/.dshpet/rec/$stamp"
+        try { File(recDir).mkdirs() } catch (_: Throwable) {}
+        writeRecState("running")
+        val t = Thread {
+            val idx = File(recDir, "index.jsonl")
+            while (recOn) {
+                val start = System.currentTimeMillis()
+                try {
+                    val f = File(recDir, "f_" + start + ".jpg")
+                    if (ScreenCapture.grabTo(f)) {
+                        recCount++
+                        val line = org.json.JSONObject()
+                            .put("ts", start)
+                            .put("file", f.name)
+                            .put("bytes", f.length())
+                            .toString()
+                        try { idx.appendText(line + "\n") } catch (_: Throwable) {}
+                    }
+                } catch (_: Throwable) {
+                }
+                val spent = System.currentTimeMillis() - start
+                val wait = recEvery * 1000L - spent
+                if (wait > 0) {
+                    try { Thread.sleep(wait) } catch (_: InterruptedException) {}
+                }
+            }
+        }
+        t.isDaemon = true
+        recThread = t
+        t.start()
+    }
+
+    fun bridgeRecordStop() {
+        recOn = false
+        recThread?.interrupt()
+        recThread = null
+        writeRecState("stopped")
+    }
+
+    private fun writeRecState(status: String) {
+        try {
+            val o = org.json.JSONObject()
+            o.put("ts", System.currentTimeMillis())
+            o.put("status", status)
+            o.put("on", recOn)
+            o.put("every", recEvery)
+            o.put("frames", recCount)
+            o.put("dir", recDir)
+            val dir = File("/sdcard/Download/.dshpet")
+            if (!dir.exists()) dir.mkdirs()
+            val tmp = File(dir, "rec_state.json.tmp")
+            tmp.writeText(o.toString())
+            if (!tmp.renameTo(File(dir, "rec_state.json"))) {
+                tmp.copyTo(File(dir, "rec_state.json"), true)
+                tmp.delete()
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
     /** 由 MainActivity 在用户同意「录制/投屏」后调用 */
     fun enableScreenCapture(resultCode: Int, data: Intent?): Boolean {
         return try {

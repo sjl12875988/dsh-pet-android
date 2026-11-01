@@ -89,6 +89,8 @@ object PetBridge {
                 if (say.isNotEmpty()) svc.bridgeSay(say)
             }
             "screen" -> svc.bridgeScreen()
+            "rec_start" -> svc.bridgeRecordStart(o.optInt("every", 3))
+            "rec_stop" -> svc.bridgeRecordStop()
             else -> Unit
         }
     }

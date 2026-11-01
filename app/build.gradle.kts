@@ -11,8 +11,8 @@ android {
         applicationId = "com.dshpet.android.screen"
         minSdk = 28
         targetSdk = 34
-        versionCode = 31
-        versionName = "1.8.21-screen"
+        versionCode = 32
+        versionName = "1.8.22-rec"
     }
 
     buildTypes {

@@ -129,6 +129,54 @@ object ScreenCapture {
         }
     }
 
+    /** 取"此刻"的一帧（Bitmap），失败 null */
+    fun takeFresh(): Bitmap? {
+        if (reader == null) return null
+        synchronized(lock) {
+            latest?.recycle()
+            latest = null
+        }
+        wantFrame = true
+        val deadline = System.currentTimeMillis() + 2500L
+        while (System.currentTimeMillis() < deadline) {
+            val bmp = synchronized(lock) {
+                val b = latest
+                latest = null
+                b
+            }
+            if (bmp != null) return bmp
+            try { Thread.sleep(60L) } catch (_: InterruptedException) {}
+        }
+        lastError = "no fresh frame in 2.5s"
+        return null
+    }
+
+    /** 抓一帧写到指定文件（录制用） */
+    fun grabTo(target: File): Boolean {
+        val bmp = takeFresh() ?: return false
+        return try {
+            val dir = target.parentFile
+            if (dir != null && !dir.exists()) dir.mkdirs()
+            val tmp = File(target.absolutePath + ".tmp")
+            val out = FileOutputStream(tmp)
+            try {
+                bmp.compress(Bitmap.CompressFormat.JPEG, 75, out)
+            } finally {
+                try { out.close() } catch (_: Throwable) {}
+            }
+            if (!tmp.renameTo(target)) {
+                tmp.copyTo(target, true)
+                tmp.delete()
+            }
+            true
+        } catch (t: Throwable) {
+            lastError = t.toString()
+            false
+        } finally {
+            bmp.recycle()
+        }
+    }
+
     /** 取"此刻"的一帧并写成 screen.jpg；失败返回 null */
     fun grab(): File? {
         if (reader == null) return null
